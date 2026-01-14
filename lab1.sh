@@ -1,172 +1,93 @@
+LACK=`tput setaf 0`
+RED=`tput setaf 1`
+GREEN=`tput setaf 2`
+YELLOW=`tput setaf 3`
+BLUE=`tput setaf 4`
+MAGENTA=`tput setaf 5`
+CYAN=`tput setaf 6`
+WHITE=`tput setaf 7`
 
-#!/bin/bash
+BG_BLACK=`tput setab 0`
+BG_RED=`tput setab 1`
+BG_GREEN=`tput setab 2`
+BG_YELLOW=`tput setab 3`
+BG_BLUE=`tput setab 4`
+BG_MAGENTA=`tput setab 5`
+BG_CYAN=`tput setab 6`
+BG_WHITE=`tput setab 7`
 
-# Fetch zone and region
-ZONE=$(gcloud compute project-info describe \
-  --format="value(commonInstanceMetadata.items[google-compute-default-zone])")
-REGION=$(gcloud compute project-info describe \
-  --format="value(commonInstanceMetadata.items[google-compute-default-region])")
-PROJECT_ID=$(gcloud config get-value project)
+BOLD=`tput bold`
+RESET=`tput sgr0`
+#----------------------------------------------------start--------------------------------------------------#
 
+echo "${YELLOW}${BOLD}Starting${RESET}" "${GREEN}${BOLD}Execution${RESET}"
 
+gcloud config set compute/zone $ZONE
 
+gcloud storage cp -r gs://spls/gsp053/kubernetes .
+cd kubernetes
 
-gcloud compute instances create web1 \
---zone=$ZONE \
---machine-type=e2-small \
---tags=network-lb-tag \
---image-family=debian-12 \
---image-project=debian-cloud \
---metadata=startup-script='#!/bin/bash
-apt-get update
-apt-get install apache2 -y
-service apache2 restart
-echo "<h3>Web Server: web1</h3>" | tee /var/www/html/index.html'
+gcloud container clusters create bootcamp \
+  --machine-type e2-small \
+  --num-nodes 3 \
+  --scopes "https://www.googleapis.com/auth/projecthosting,storage-rw"
 
-gcloud compute instances create web2 \
---zone=$ZONE \
---machine-type=e2-small \
---tags=network-lb-tag \
---image-family=debian-12 \
---image-project=debian-cloud \
---metadata=startup-script='#!/bin/bash
-apt-get update
-apt-get install apache2 -y
-service apache2 restart
-echo "<h3>Web Server: web2</h3>" | tee /var/www/html/index.html'
+sed -i 's/image: "kelseyhightower\/auth:2.0.0"/image: "kelseyhightower\/auth:1.0.0"/' deployments/auth.yaml
 
-gcloud compute instances create web3 \
---zone=$ZONE \
---machine-type=e2-small \
---tags=network-lb-tag \
---image-family=debian-12 \
---image-project=debian-cloud \
---metadata=startup-script='#!/bin/bash
-apt-get update
-apt-get install apache2 -y
-service apache2 restart
-echo "<h3>Web Server: web3</h3>" | tee /var/www/html/index.html'
+kubectl create -f deployments/auth.yaml
 
+kubectl get deployments
 
+kubectl get pods
 
+kubectl create -f services/auth.yaml
 
+kubectl create -f deployments/hello.yaml
 
-gcloud compute firewall-rules create www-firewall-network-lb --allow tcp:80 --target-tags network-lb-tag
+kubectl create -f services/hello.yaml
 
+kubectl create secret generic tls-certs --from-file tls/
 
+kubectl create configmap nginx-frontend-conf --from-file=nginx/frontend.conf
 
+kubectl create -f deployments/frontend.yaml
 
-gcloud compute addresses create network-lb-ip-1 \
-    --region=$REGION  
+kubectl create -f services/frontend.yaml
 
+kubectl get services frontend
 
+sleep 10
 
-gcloud compute http-health-checks create basic-check
+kubectl scale deployment hello --replicas=5
 
+kubectl get pods | grep hello- | wc -l
 
- gcloud compute target-pools create www-pool \
-    --region=$REGION  --http-health-check basic-check
+kubectl scale deployment hello --replicas=3
 
+kubectl get pods | grep hello- | wc -l
 
-gcloud compute target-pools add-instances www-pool \
-    --instances web1,web2,web3 --zone=$ZONE
-    
+sed -i 's/image: "kelseyhightower\/auth:1.0.0"/image: "kelseyhightower\/auth:2.0.0"/' deployments/hello.yaml
 
-gcloud compute forwarding-rules create www-rule \
-    --region=$REGION \
-    --ports 80 \
-    --address network-lb-ip-1 \
-    --target-pool www-pool
+kubectl get replicaset
 
+kubectl rollout history deployment/hello
 
-IPADDRESS=$(gcloud compute forwarding-rules describe www-rule --region=$REGION  --format="json" | jq -r .IPAddress)
+kubectl get pods -o jsonpath --template='{range .items[*]}{.metadata.name}{"\t"}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
 
+kubectl rollout resume deployment/hello
 
+kubectl rollout status deployment/hello
 
-#TASK 3
+kubectl rollout undo deployment/hello
 
-gcloud compute instance-templates create lb-backend-template \
-   --region=$REGION \
-   --network=default \
-   --subnet=default \
-   --tags=allow-health-check \
-   --machine-type=e2-medium \
-   --image-family=debian-11 \
-   --image-project=debian-cloud \
-   --metadata=startup-script='#!/bin/bash
-     apt-get update
-     apt-get install apache2 -y
-     a2ensite default-ssl
-     a2enmod ssl
-     vm_hostname="$(curl -H "Metadata-Flavor:Google" \
-     http://169.254.169.254/computeMetadata/v1/instance/name)"
-     echo "Page served from: $vm_hostname" | \
-     tee /var/www/html/index.html
-     systemctl restart apache2'
+kubectl rollout history deployment/hello
 
+kubectl get pods -o jsonpath --template='{range .items[*]}{.metadata.name}{"\t"}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
 
+kubectl create -f deployments/hello-canary.yaml
 
+kubectl get deployments
 
-gcloud compute instance-groups managed create lb-backend-group \
-   --template=lb-backend-template --size=2 --zone=$ZONE 
+echo "${RED}${BOLD}Congratulations${RESET}" "${WHITE}${BOLD}for${RESET}" "${GREEN}${BOLD}Completing the Lab !!!${RESET}"
 
-
-
-gcloud compute firewall-rules create fw-allow-health-check \
-  --network=default \
-  --action=allow \
-  --direction=ingress \
-  --source-ranges=130.211.0.0/22,35.191.0.0/16 \
-  --target-tags=allow-health-check \
-  --rules=tcp:80
-
-
-
-gcloud compute addresses create lb-ipv4-1 \
-  --ip-version=IPV4 \
-  --global
-
-
-
-gcloud compute addresses describe lb-ipv4-1 \
-  --format="get(address)" \
-  --global
-
-
-
-
-gcloud compute health-checks create http http-basic-check \
-  --port 80
-
-
-
-gcloud compute backend-services create web-backend-service \
-  --protocol=HTTP \
-  --port-name=http \
-  --health-checks=http-basic-check \
-  --global
-
-
-
-gcloud compute backend-services add-backend web-backend-service \
-  --instance-group=lb-backend-group \
-  --instance-group-zone=$ZONE \
-  --global
-
-
-
-gcloud compute url-maps create web-map-http \
-    --default-service web-backend-service
-
-
-
-
-gcloud compute target-http-proxies create http-lb-proxy \
-    --url-map web-map-http
-
-
-gcloud compute forwarding-rules create http-content-rule \
-    --address=lb-ipv4-1\
-    --global \
-    --target-http-proxy=http-lb-proxy \
-    --ports=80
+#-----------------------------------------------------end----------------------------------------------------------#
