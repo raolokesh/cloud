@@ -21,39 +21,21 @@ RESET=`tput sgr0`
 #----------------------------------------------------start--------------------------------------------------#
 
 echo "${YELLOW}${BOLD}Starting${RESET}" "${GREEN}${BOLD}Execution${RESET}"
-
-gcloud config set compute/zone $ZONE
-
-gcloud storage cp -r gs://spls/gsp053/kubernetes .
-cd kubernetes
-
-gcloud container clusters create bootcamp \
-  --machine-type e2-small \
-  --num-nodes 3 \
-  --scopes "https://www.googleapis.com/auth/projecthosting,storage-rw"
-
-
-kubectl create -f deployments/fortune-app-blue.yaml
-
+kubectl rollout resume deployment/fortune-app-blue
+kubectl rollout status deployment/fortune-app-blue
+kubectl rollout undo deployment/fortune-app-blue
+curl http://`kubectl get svc fortune-app -o=jsonpath="{.status.loadBalancer.ingress[0].ip}"`/version
+cat deployments/fortune-app-canary.yaml
+kubectl create -f deployments/fortune-app-canary.yaml
 kubectl get deployments
-
-kubectl get replicasets
-
-kubectl get pods
-
-kubectl create -f services/fortune-app.yaml
-
-kubectl get services fortune-app
-
-sleep 10
-
-kubectl scale deployment fortune-app-blue --replicas=5
-
-kubectl get pods | grep fortune-app-blue | wc -l
-
-kubectl scale deployment fortune-app-blue --replicas=3
-
-kubectl get pods | grep fortune-app-blue | wc -l
+for i in {1..10}; do curl -s http://`kubectl get svc fortune-app -o=jsonpath="{.status.loadBalancer.ingress[0].ip}"`/version; echo;
+done
+kubectl apply -f services/fortune-app-blue-service.yaml
+kubectl create -f deployments/fortune-app-green.yaml
+curl http://`kubectl get svc fortune-app -o=jsonpath="{.status.loadBalancer.ingress[0].ip}"`/version
+kubectl apply -f services/fortune-app-green-service.yaml
+kubectl apply -f services/fortune-app-blue-service.yaml
+curl http://`kubectl get svc fortune-app -o=jsonpath="{.status.loadBalancer.ingress[0].ip}"`/version
 
 echo "${RED}${BOLD}Congratulations${RESET}" "${WHITE}${BOLD}for${RESET}" "${GREEN}${BOLD}Completing the Lab !!!${RESET}"
 
